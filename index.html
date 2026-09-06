@@ -78,33 +78,43 @@
             background: #111;
         }
 
-        #filter-bar {
+        /* 필터 바 (가로 스크롤) */
+        #filter-bar-wrapper {
             position: fixed;
-            bottom: 90px;
+            bottom: 100px;
             left: 0;
             right: 0;
-            display: flex;
-            justify-content: center;
-            gap: 10px;
-            padding: 0 12px;
-            flex-wrap: wrap;
             z-index: 10;
+            padding: 0 16px;
+        }
+        #filter-bar {
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 6px 4px 12px 4px;
+            scroll-behavior: smooth;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+        }
+        #filter-bar::-webkit-scrollbar {
+            display: none;
         }
         .filter-btn {
+            flex-shrink: 0;
             background: rgba(20, 30, 50, 0.7);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
             border: 1px solid rgba(255,255,255,0.1);
             color: #fff;
-            padding: 8px 16px;
+            padding: 8px 18px;
             border-radius: 30px;
             font-size: 13px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s;
             box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-            min-width: 52px;
-            text-align: center;
+            white-space: nowrap;
         }
         .filter-btn:active { transform: scale(0.92); }
         .filter-btn.active {
@@ -112,12 +122,24 @@
             border-color: #8ab4ff;
             box-shadow: 0 0 20px rgba(74,122,255,0.5);
         }
+        .filter-btn.roadmap {
+            background: rgba(255,100,200,0.2);
+            border-color: #ff6ec7;
+        }
 
-        #capture-btn {
+        /* 버튼 영역 (촬영 + 저장 분리) */
+        #button-area {
             position: fixed;
             bottom: 28px;
-            left: 50%;
-            transform: translateX(-50%);
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            z-index: 10;
+            padding: 0 20px;
+        }
+        #capture-btn {
             width: 68px;
             height: 68px;
             border-radius: 50%;
@@ -126,9 +148,29 @@
             box-shadow: 0 8px 30px rgba(0,0,0,0.6);
             cursor: pointer;
             transition: 0.15s;
-            z-index: 10;
+            flex-shrink: 0;
         }
-        #capture-btn:active { transform: translateX(-50%) scale(0.88); }
+        #capture-btn:active { transform: scale(0.88); }
+
+        #save-btn {
+            padding: 12px 24px;
+            border-radius: 40px;
+            background: linear-gradient(135deg, #4a7aff, #6c5ce7);
+            border: none;
+            color: #fff;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(74,122,255,0.4);
+            transition: 0.15s;
+            flex-shrink: 0;
+        }
+        #save-btn:active { transform: scale(0.94); }
+        #save-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none;
+        }
 
         #status {
             position: fixed;
@@ -142,6 +184,21 @@
             z-index: 20;
             text-align: center;
             max-width: 90%;
+        }
+
+        .scroll-hint {
+            position: fixed;
+            bottom: 170px;
+            right: 20px;
+            color: rgba(255,255,255,0.15);
+            font-size: 11px;
+            z-index: 5;
+            pointer-events: none;
+            animation: fadePulse 2s infinite;
+        }
+        @keyframes fadePulse {
+            0%, 100% { opacity: 0.15; }
+            50% { opacity: 0.5; }
         }
     </style>
 </head>
@@ -160,17 +217,30 @@
         <canvas id="preview-canvas"></canvas>
     </div>
 
-    <div id="filter-bar">
-        <button class="filter-btn active" data-filter="original">✨ 원본</button>
-        <button class="filter-btn" data-filter="indigo">💙 남색</button>
-        <button class="filter-btn" data-filter="noise">📺 노이즈</button>
-        <button class="filter-btn" data-filter="y2k">🌸 Y2K</button>
-        <button class="filter-btn" onclick="location.href='roadmap.html'" style="background:rgba(255,100,200,0.2); border-color:#ff6ec7;">
-        🗺️ 로드맵
-    </button>
+    <div id="filter-bar-wrapper">
+        <div id="filter-bar">
+            <button class="filter-btn active" data-filter="original">✨ 원본</button>
+            <button class="filter-btn" data-filter="indigo">💙 남색</button>
+            <button class="filter-btn" data-filter="noise">📺 노이즈</button>
+            <button class="filter-btn" data-filter="y2k">🌸 Y2K</button>
+            <button class="filter-btn" data-filter="sepia">🟫 세피아</button>
+            <button class="filter-btn" data-filter="grayscale">⚫ 흑백</button>
+            <button class="filter-btn" data-filter="invert">🔄 반전</button>
+            <button class="filter-btn" data-filter="high_contrast">🔆 고대비</button>
+            <button class="filter-btn" data-filter="warm">☀️ 따뜻한</button>
+            <button class="filter-btn" data-filter="cool">❄️ 차가운</button>
+            <button class="filter-btn" data-filter="pixelate">🧊 픽셀화</button>
+            <button class="filter-btn roadmap" onclick="location.href='roadmap.html'">🗺️ 로드맵</button>
+        </div>
     </div>
 
-    <button id="capture-btn" aria-label="사진 촬영"></button>
+    <div class="scroll-hint">← 좌우로 밀어보세요 →</div>
+
+    <!-- 버튼 영역: 촬영 + 저장 분리 -->
+    <div id="button-area">
+        <button id="capture-btn" aria-label="사진 촬영"></button>
+        <button id="save-btn" disabled>💾 저장</button>
+    </div>
 
     <script>
         // ============================================================
@@ -182,7 +252,8 @@
         const statusEl = document.getElementById('status');
         const loadingEl = document.getElementById('loading');
         const captureBtn = document.getElementById('capture-btn');
-        const filterBtns = document.querySelectorAll('.filter-btn');
+        const saveBtn = document.getElementById('save-btn');
+        const filterBtns = document.querySelectorAll('.filter-btn:not(.roadmap)');
 
         let currentFilter = 'original';
         let cameraStream = null;
@@ -191,6 +262,7 @@
         let pythonApplyFilter = null;
         let isPyReady = false;
         let isFilterApplied = false;
+        let isCaptured = false; // 촬영 버튼을 눌렀는지
         const container = document.getElementById('camera-container');
 
         // ============================================================
@@ -298,9 +370,9 @@
         }
 
         // ============================================================
-        // 5. 필터 적용 (현재 프레임 캡처 → 파이썬 필터 → 캔버스에 표시)
+        // 5. 필터 적용 (촬영 버튼 누를 때 실행)
         // ============================================================
-        async function applyFilterToCurrentFrame() {
+        async function captureAndApplyFilter() {
             if (!isPyReady) {
                 alert('아직 파이썬 필터가 준비되지 않았습니다.');
                 return;
@@ -310,15 +382,20 @@
                 return;
             }
 
-            // "원본" 필터면 필터를 해제하고 원본 스트림으로 복귀
+            // "원본" 필터면 그냥 현재 프레임을 캔버스에 표시 (필터 없이)
             if (currentFilter === 'original') {
-                isFilterApplied = false;
-                statusEl.textContent = '📷 원본 카메라';
-                console.log('🔄 원본 모드로 전환');
+                const w = previewCanvas.width;
+                const h = previewCanvas.height;
+                ctx.drawImage(video, 0, 0, w, h);
+                isFilterApplied = true;
+                isCaptured = true;
+                saveBtn.disabled = false;
+                statusEl.textContent = '📷 원본 캡처 완료 (저장 가능)';
+                console.log('✅ 원본 캡처 완료');
                 return;
             }
 
-            console.log(`🎯 필터 적용 시작: ${currentFilter}`);
+            console.log(`🎯 필터 캡처 시작: ${currentFilter}`);
 
             const w = previewCanvas.width;
             const h = previewCanvas.height;
@@ -363,15 +440,17 @@
             console.log('✅ 6) 필터링된 이미지를 캔버스에 그림');
 
             isFilterApplied = true;
-            console.log('✅ 7) 필터 적용 상태로 설정 완료');
+            isCaptured = true;
+            saveBtn.disabled = false;
+            console.log('✅ 7) 캡처 및 필터 적용 완료');
         }
 
         // ============================================================
         // 6. 저장 (현재 캔버스 내용을 Blob으로 다운로드)
         // ============================================================
         async function saveImage() {
-            if (!cameraStream) {
-                alert('카메라가 켜져 있지 않습니다.');
+            if (!isCaptured) {
+                alert('먼저 촬영 버튼을 눌러주세요.');
                 return;
             }
 
@@ -393,6 +472,8 @@
                 setTimeout(() => URL.revokeObjectURL(url), 5000);
 
                 statusEl.textContent = `💾 저장 완료! (${currentFilter})`;
+                saveBtn.disabled = true;
+                isCaptured = false;
             } catch (err) {
                 console.error('저장 오류:', err);
                 try {
@@ -404,6 +485,8 @@
                     link.click();
                     document.body.removeChild(link);
                     statusEl.textContent = `💾 저장 완료 (fallback)`;
+                    saveBtn.disabled = true;
+                    isCaptured = false;
                 } catch (e2) {
                     alert('이미지를 저장할 수 없습니다. 콘솔을 확인하세요.');
                 }
@@ -418,18 +501,31 @@
         // 7. 이벤트 리스너
         // ============================================================
 
+        // 필터 버튼 클릭: 필터만 선택 (자동 적용 아님)
         filterBtns.forEach(btn => {
-            btn.addEventListener('click', async function() {
+            btn.addEventListener('click', function() {
                 filterBtns.forEach(b => b.classList.remove('active'));
                 this.classList.add('active');
                 currentFilter = this.dataset.filter;
-
-                // 필터 적용 실행
-                await applyFilterToCurrentFrame();
+                
+                // 원본이면 바로 원본 모드로 전환
+                if (currentFilter === 'original') {
+                    isFilterApplied = false;
+                    isCaptured = false;
+                    saveBtn.disabled = true;
+                    statusEl.textContent = '📷 원본 카메라 모드';
+                } else {
+                    statusEl.textContent = `🎨 ${this.textContent} 필터 선택됨 (촬영 버튼 누르세요)`;
+                }
             });
         });
 
-        captureBtn.addEventListener('click', saveImage);
+        // 촬영 버튼: 현재 프레임 캡처 + 필터 적용
+        captureBtn.addEventListener('click', captureAndApplyFilter);
+
+        // 저장 버튼: 캔버스 내용 저장
+        saveBtn.addEventListener('click', saveImage);
+
         window.addEventListener('resize', resizeCanvas);
 
         // ============================================================

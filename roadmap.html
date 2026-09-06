@@ -158,17 +158,6 @@
             display: none;
         }
 
-        .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            color: rgba(255,255,255,0.3);
-        }
-        .empty-state .big-icon {
-            font-size: 60px;
-            margin-bottom: 16px;
-        }
-
-        /* 하단 안내 */
         .footer-note {
             text-align: center;
             font-size: 12px;
@@ -180,6 +169,29 @@
         .footer-note span {
             color: rgba(255,255,255,0.35);
         }
+
+        /* 업로드 완료 토스트 */
+        .toast {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(74,122,255,0.9);
+            color: #fff;
+            padding: 12px 24px;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: 600;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            z-index: 999;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+        .toast.show {
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -189,7 +201,6 @@
         <button class="back-btn" onclick="location.href='index.html'">📷 카메라</button>
     </div>
 
-    <!-- 필터 카드들이 여기에 동적으로 렌더링됨 -->
     <div id="filter-list"></div>
 
     <div class="footer-note">
@@ -197,15 +208,25 @@
         <span style="font-size:10px;">💾 자동 저장 (localStorage)</span>
     </div>
 
+    <!-- 토스트 메시지 -->
+    <div id="toast" class="toast">✅ 업로드 완료!</div>
+
     <script>
         // ============================================================
-        // 1. 필터 정의
+        // 1. 필터 정의 (index.html과 동기화)
         // ============================================================
         const FILTERS = [
             { id: 'original', label: '✨ 원본', emoji: '🌿', desc: '자연 그대로' },
             { id: 'indigo', label: '💙 남색', emoji: '🌊', desc: '깊고 차가운' },
             { id: 'noise', label: '📺 노이즈', emoji: '📼', desc: '복고 감성' },
-            { id: 'y2k', label: '🌸 Y2K', emoji: '🌈', desc: '핑크빛 레트로' }
+            { id: 'y2k', label: '🌸 Y2K', emoji: '🌈', desc: '핑크빛 레트로' },
+            { id: 'sepia', label: '🟫 세피아', emoji: '📜', desc: '빈티지 감성' },
+            { id: 'grayscale', label: '⚫ 흑백', emoji: '🎞️', desc: '모노크롬' },
+            { id: 'invert', label: '🔄 반전', emoji: '🎬', desc: '네거티브' },
+            { id: 'high_contrast', label: '🔆 고대비', emoji: '💥', desc: '강렬한 대비' },
+            { id: 'warm', label: '☀️ 따뜻한', emoji: '🌅', desc: '따뜻한 분위기' },
+            { id: 'cool', label: '❄️ 차가운', emoji: '🌌', desc: '시원한 느낌' },
+            { id: 'pixelate', label: '🧊 픽셀화', emoji: '🎮', desc: '레트로 게임' }
         ];
 
         // ============================================================
@@ -224,7 +245,6 @@
             localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         }
 
-        // 각 필터별 데이터 구조: { imageDataUrl: string, memo: string }
         function getFilterData(filterId) {
             const all = loadData();
             return all[filterId] || { imageDataUrl: null, memo: '' };
@@ -237,7 +257,17 @@
         }
 
         // ============================================================
-        // 3. UI 렌더링
+        // 3. 토스트 메시지
+        // ============================================================
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2000);
+        }
+
+        // ============================================================
+        // 4. UI 렌더링
         // ============================================================
         function renderFilters() {
             const container = document.getElementById('filter-list');
@@ -249,7 +279,6 @@
                 card.className = 'filter-card';
                 card.dataset.filterId = filter.id;
 
-                // 헤더
                 const header = document.createElement('div');
                 header.className = 'filter-header';
                 header.innerHTML = `
@@ -257,7 +286,6 @@
                     <span class="badge">${filter.desc}</span>
                 `;
 
-                // 사진 영역
                 const photoArea = document.createElement('div');
                 photoArea.className = 'photo-area';
 
@@ -277,7 +305,6 @@
                     photoArea.appendChild(placeholder);
                 }
 
-                // 컨트롤 버튼
                 const controls = document.createElement('div');
                 controls.className = 'controls';
 
@@ -294,7 +321,6 @@
                 controls.appendChild(uploadBtn);
                 controls.appendChild(deleteBtn);
 
-                // 메모
                 const memoArea = document.createElement('div');
                 memoArea.className = 'memo-area';
                 const textarea = document.createElement('textarea');
@@ -304,10 +330,8 @@
                     const current = getFilterData(filter.id);
                     setFilterData(filter.id, current.imageDataUrl, e.target.value);
                 };
-
                 memoArea.appendChild(textarea);
 
-                // 카드 조립
                 card.appendChild(header);
                 card.appendChild(photoArea);
                 card.appendChild(controls);
@@ -317,12 +341,14 @@
         }
 
         // ============================================================
-        // 4. 업로드 (파일 선택 → 이미지 로드)
+        // 5. 업로드 (갤러리 전용 - 카메라 강제 실행 없음)
         // ============================================================
         function triggerUpload(filterId) {
-            // 동적 파일 입력 생성
             const input = document.createElement('input');
             input.type = 'file';
+            // ⭐ 중요: capture 속성을 제거하여 갤러리만 열리게 함
+            // ⭐ accept="image/*" 만으로 모바일에서 갤러리 + 카메라 선택창이 뜸
+            //    하지만 capture 속성이 없으면 대부분 갤러리가 먼저 열림
             input.accept = 'image/*';
             input.className = 'hidden-input';
 
@@ -333,13 +359,12 @@
                 const reader = new FileReader();
                 reader.onload = (ev) => {
                     const dataUrl = ev.target.result;
-                    // 기존 메모 유지
                     const current = getFilterData(filterId);
                     setFilterData(filterId, dataUrl, current.memo || '');
-                    renderFilters(); // UI 갱신
+                    renderFilters();
+                    showToast(`✅ ${FILTERS.find(f => f.id === filterId).label} 업로드 완료!`);
                 };
                 reader.readAsDataURL(file);
-                // 입력 초기화 (같은 파일 재선택 가능)
                 input.value = '';
             };
 
@@ -349,21 +374,21 @@
         }
 
         // ============================================================
-        // 5. 삭제
+        // 6. 삭제
         // ============================================================
         function deletePhoto(filterId) {
             if (!confirm(`${FILTERS.find(f => f.id === filterId).label} 사진을 삭제하시겠어요?`)) return;
             setFilterData(filterId, null, '');
             renderFilters();
+            showToast(`🗑️ ${FILTERS.find(f => f.id === filterId).label} 삭제됨`);
         }
 
         // ============================================================
-        // 6. 초기화 및 실행
+        // 7. 초기화 및 실행
         // ============================================================
         renderFilters();
-
-        // 필터 로드맵 데이터 내보내기 (개발용)
         console.log('🗺️ 필터 로드맵 데이터:', loadData());
+        console.log('📸 지원 필터:', FILTERS.map(f => f.label).join(', '));
     </script>
 </body>
 </html>
