@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>🗺️ 필터 로드맵</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a12;
+            font-family: -apple-system, system-ui, sans-serif;
+            padding: 16px;
+            padding-bottom: 80px;
+            color: #fff;
+            min-height: 100vh;
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 4px 20px 4px;
+        }
+        .header h1 {
+            font-size: 22px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #4a7aff, #ff6ec7);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header .back-btn {
+            background: rgba(255,255,255,0.1);
+            border: none;
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            cursor: pointer;
+            backdrop-filter: blur(4px);
+        }
+
+        .filter-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 20px;
+            overflow: hidden;
+            margin-bottom: 24px;
+            border: 1px solid rgba(255,255,255,0.06);
+            backdrop-filter: blur(8px);
+        }
+        .filter-card .filter-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            background: rgba(0,0,0,0.3);
+        }
+        .filter-card .filter-header .name {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .filter-card .filter-header .badge {
+            font-size: 12px;
+            background: rgba(74,122,255,0.3);
+            padding: 4px 12px;
+            border-radius: 30px;
+            color: #8ab4ff;
+        }
+
+        .filter-card .photo-area {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 3 / 2;
+            background: #1a1a2e;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .filter-card .photo-area img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .filter-card .photo-area .placeholder {
+            color: rgba(255,255,255,0.25);
+            font-size: 14px;
+            text-align: center;
+            padding: 16px;
+        }
+        .filter-card .photo-area .placeholder .icon {
+            font-size: 40px;
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        .filter-card .controls {
+            display: flex;
+            gap: 10px;
+            padding: 12px 16px 16px 16px;
+            flex-wrap: wrap;
+        }
+        .filter-card .controls button {
+            flex: 1;
+            min-width: 60px;
+            padding: 10px 12px;
+            border: none;
+            border-radius: 30px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.15s;
+            background: rgba(255,255,255,0.08);
+            color: #fff;
+        }
+        .filter-card .controls button:active {
+            transform: scale(0.94);
+        }
+        .filter-card .controls .upload-btn {
+            background: #4a7aff;
+            color: #fff;
+        }
+        .filter-card .controls .delete-btn {
+            background: rgba(255,70,70,0.2);
+            color: #ff6b6b;
+        }
+
+        .filter-card .memo-area {
+            padding: 0 16px 16px 16px;
+        }
+        .filter-card .memo-area textarea {
+            width: 100%;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 12px;
+            padding: 10px 14px;
+            color: #ccc;
+            font-size: 14px;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 50px;
+            transition: 0.2s;
+        }
+        .filter-card .memo-area textarea:focus {
+            outline: none;
+            border-color: #4a7aff;
+            background: rgba(255,255,255,0.08);
+        }
+        .filter-card .memo-area textarea::placeholder {
+            color: rgba(255,255,255,0.25);
+        }
+
+        /* 숨김 파일 입력 */
+        .hidden-input {
+            display: none;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: rgba(255,255,255,0.3);
+        }
+        .empty-state .big-icon {
+            font-size: 60px;
+            margin-bottom: 16px;
+        }
+
+        /* 하단 안내 */
+        .footer-note {
+            text-align: center;
+            font-size: 12px;
+            color: rgba(255,255,255,0.2);
+            padding: 20px 0 10px 0;
+            border-top: 1px solid rgba(255,255,255,0.04);
+            margin-top: 10px;
+        }
+        .footer-note span {
+            color: rgba(255,255,255,0.35);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>🗺️ 필터 로드맵</h1>
+        <button class="back-btn" onclick="location.href='index.html'">📷 카메라</button>
+    </div>
+
+    <!-- 필터 카드들이 여기에 동적으로 렌더링됨 -->
+    <div id="filter-list"></div>
+
+    <div class="footer-note">
+        <span>📸 각 필터에 가장 어울리는 사진을 업로드하세요</span><br>
+        <span style="font-size:10px;">💾 자동 저장 (localStorage)</span>
+    </div>
+
+    <script>
+        // ============================================================
+        // 1. 필터 정의
+        // ============================================================
+        const FILTERS = [
+            { id: 'original', label: '✨ 원본', emoji: '🌿', desc: '자연 그대로' },
+            { id: 'indigo', label: '💙 남색', emoji: '🌊', desc: '깊고 차가운' },
+            { id: 'noise', label: '📺 노이즈', emoji: '📼', desc: '복고 감성' },
+            { id: 'y2k', label: '🌸 Y2K', emoji: '🌈', desc: '핑크빛 레트로' }
+        ];
+
+        // ============================================================
+        // 2. 데이터 관리 (localStorage)
+        // ============================================================
+        const STORAGE_KEY = 'filter_roadmap_data';
+
+        function loadData() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                return raw ? JSON.parse(raw) : {};
+            } catch { return {}; }
+        }
+
+        function saveData(data) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        }
+
+        // 각 필터별 데이터 구조: { imageDataUrl: string, memo: string }
+        function getFilterData(filterId) {
+            const all = loadData();
+            return all[filterId] || { imageDataUrl: null, memo: '' };
+        }
+
+        function setFilterData(filterId, imageDataUrl, memo) {
+            const all = loadData();
+            all[filterId] = { imageDataUrl, memo: memo || '' };
+            saveData(all);
+        }
+
+        // ============================================================
+        // 3. UI 렌더링
+        // ============================================================
+        function renderFilters() {
+            const container = document.getElementById('filter-list');
+            container.innerHTML = '';
+
+            FILTERS.forEach(filter => {
+                const data = getFilterData(filter.id);
+                const card = document.createElement('div');
+                card.className = 'filter-card';
+                card.dataset.filterId = filter.id;
+
+                // 헤더
+                const header = document.createElement('div');
+                header.className = 'filter-header';
+                header.innerHTML = `
+                    <span class="name">${filter.emoji} ${filter.label}</span>
+                    <span class="badge">${filter.desc}</span>
+                `;
+
+                // 사진 영역
+                const photoArea = document.createElement('div');
+                photoArea.className = 'photo-area';
+
+                if (data.imageDataUrl) {
+                    const img = document.createElement('img');
+                    img.src = data.imageDataUrl;
+                    img.alt = filter.label;
+                    photoArea.appendChild(img);
+                } else {
+                    const placeholder = document.createElement('div');
+                    placeholder.className = 'placeholder';
+                    placeholder.innerHTML = `
+                        <span class="icon">🖼️</span>
+                        아직 사진이 없어요<br>
+                        <span style="font-size:12px; opacity:0.6;">업로드 버튼을 눌러주세요</span>
+                    `;
+                    photoArea.appendChild(placeholder);
+                }
+
+                // 컨트롤 버튼
+                const controls = document.createElement('div');
+                controls.className = 'controls';
+
+                const uploadBtn = document.createElement('button');
+                uploadBtn.className = 'upload-btn';
+                uploadBtn.textContent = '📤 업로드';
+                uploadBtn.onclick = () => triggerUpload(filter.id);
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.textContent = '🗑️ 삭제';
+                deleteBtn.onclick = () => deletePhoto(filter.id);
+
+                controls.appendChild(uploadBtn);
+                controls.appendChild(deleteBtn);
+
+                // 메모
+                const memoArea = document.createElement('div');
+                memoArea.className = 'memo-area';
+                const textarea = document.createElement('textarea');
+                textarea.placeholder = '✏️ 여행지나 느낌을 적어보세요...';
+                textarea.value = data.memo || '';
+                textarea.oninput = (e) => {
+                    const current = getFilterData(filter.id);
+                    setFilterData(filter.id, current.imageDataUrl, e.target.value);
+                };
+
+                memoArea.appendChild(textarea);
+
+                // 카드 조립
+                card.appendChild(header);
+                card.appendChild(photoArea);
+                card.appendChild(controls);
+                card.appendChild(memoArea);
+                container.appendChild(card);
+            });
+        }
+
+        // ============================================================
+        // 4. 업로드 (파일 선택 → 이미지 로드)
+        // ============================================================
+        function triggerUpload(filterId) {
+            // 동적 파일 입력 생성
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+            input.capture = 'environment'; // 모바일 카메라 직접 실행
+            input.className = 'hidden-input';
+
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    const dataUrl = ev.target.result;
+                    // 기존 메모 유지
+                    const current = getFilterData(filterId);
+                    setFilterData(filterId, dataUrl, current.memo || '');
+                    renderFilters(); // UI 갱신
+                };
+                reader.readAsDataURL(file);
+                // 입력 초기화 (같은 파일 재선택 가능)
+                input.value = '';
+            };
+
+            document.body.appendChild(input);
+            input.click();
+            document.body.removeChild(input);
+        }
+
+        // ============================================================
+        // 5. 삭제
+        // ============================================================
+        function deletePhoto(filterId) {
+            if (!confirm(`${FILTERS.find(f => f.id === filterId).label} 사진을 삭제하시겠어요?`)) return;
+            setFilterData(filterId, null, '');
+            renderFilters();
+        }
+
+        // ============================================================
+        // 6. 초기화 및 실행
+        // ============================================================
+        renderFilters();
+
+        // 필터 로드맵 데이터 내보내기 (개발용)
+        console.log('🗺️ 필터 로드맵 데이터:', loadData());
+    </script>
+</body>
+</html>

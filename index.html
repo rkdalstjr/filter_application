@@ -165,6 +165,9 @@
         <button class="filter-btn" data-filter="indigo">💙 남색</button>
         <button class="filter-btn" data-filter="noise">📺 노이즈</button>
         <button class="filter-btn" data-filter="y2k">🌸 Y2K</button>
+        <button class="filter-btn" onclick="location.href='roadmap.html'" style="background:rgba(255,100,200,0.2); border-color:#ff6ec7;">
+        🗺️ 로드맵
+    </button>
     </div>
 
     <button id="capture-btn" aria-label="사진 촬영"></button>
@@ -187,7 +190,7 @@
         let pyodide = null;
         let pythonApplyFilter = null;
         let isPyReady = false;
-        let isFilterApplied = false; // 필터가 적용된 상태인지
+        let isFilterApplied = false;
         const container = document.getElementById('camera-container');
 
         // ============================================================
@@ -314,14 +317,18 @@
                 return;
             }
 
-            // 현재 캔버스에 그려진 이미지(원본)를 캡처
-            const width = previewCanvas.width;
-            const height = previewCanvas.height;
-            const imageData = ctx.getImageData(0, 0, width, height);
+            // ===== ★★★ 수정된 부분 (필수) ★★★ =====
+            // 1) 현재 비디오 프레임을 캔버스에 명시적으로 그리기 (이게 없으면 빈 캔버스를 캡처함!)
+            const w = previewCanvas.width;
+            const h = previewCanvas.height;
+            ctx.drawImage(video, 0, 0, w, h);
+
+            // 2) 이제 캔버스에서 이미지 데이터 가져오기 (비디오 프레임이 그려져 있음)
+            const imageData = ctx.getImageData(0, 0, w, h);
 
             const np = pyodide.globals.get('np');
             const jsArray = new Uint8Array(imageData.data.buffer);
-            const npArray = np.array(jsArray).reshape([height, width, 4]);
+            const npArray = np.array(jsArray).reshape([h, w, 4]);
 
             statusEl.textContent = '🎨 필터 적용 중...';
             const startTime = performance.now();
@@ -341,10 +348,10 @@
 
             const resultData = resultArray.toJs();
             const clampedData = new Uint8ClampedArray(resultData.buffer);
-            const filteredImageData = new ImageData(clampedData, width, height);
+            const filteredImageData = new ImageData(clampedData, w, h);
             ctx.putImageData(filteredImageData, 0, 0);
 
-            isFilterApplied = true; // 필터가 적용된 상태로 표시
+            isFilterApplied = true; // 필터가 적용된 상태로 표시 (drawLoop가 덮어쓰지 않음)
         }
 
         // ============================================================
@@ -359,13 +366,11 @@
             const fileName = `filter_${currentFilter}_${Date.now()}.png`;
 
             try {
-                // Canvas → Blob 변환 (가장 확실한 방법)
                 const blob = await new Promise(resolve => previewCanvas.toBlob(resolve, 'image/png'));
                 if (!blob) {
                     throw new Error('Blob 생성 실패');
                 }
 
-                // Blob URL 생성 및 다운로드 링크 클릭
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.download = fileName;
@@ -378,7 +383,6 @@
                 statusEl.textContent = `💾 저장 완료! (${currentFilter})`;
             } catch (err) {
                 console.error('저장 오류:', err);
-                // 최후의 수단: data URL로 저장 시도
                 try {
                     const dataURL = previewCanvas.toDataURL('image/png');
                     const link = document.createElement('a');
@@ -402,7 +406,6 @@
         // 7. 이벤트 리스너
         // ============================================================
 
-        // 필터 버튼 클릭 → 필터 적용
         filterBtns.forEach(btn => {
             btn.addEventListener('click', async function() {
                 filterBtns.forEach(b => b.classList.remove('active'));
@@ -414,9 +417,7 @@
             });
         });
 
-        // 촬영 버튼 → 저장
         captureBtn.addEventListener('click', saveImage);
-
         window.addEventListener('resize', resizeCanvas);
 
         // ============================================================
