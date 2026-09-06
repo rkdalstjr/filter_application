@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>🐍 디버그 카메라 (가상 + 외부 필터)</title>
+
+    <!-- Pyodide 로드 -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            background: #0a0a12;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: system-ui, -apple-system, sans-serif;
+            padding: 16px;
+            touch-action: none;
+        }
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #0a0a12;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            z-index: 999;
+            font-size: 18px;
+            transition: opacity 0.5s;
+        }
+        #loading.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        #loading .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #333;
+            border-top: 4px solid #4a7aff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        #camera-container {
+            position: relative;
+            width: 100%;
+            max-width: 420px;
+            aspect-ratio: 3 / 4;
+            background: #000;
+            border-radius: 28px;
+            overflow: hidden;
+            box-shadow: 0 10px 50px rgba(0,20,80,0.7);
+        }
+        #camera-container video { display: none; }
+        #preview-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            object-fit: cover;
+            background: #111;
+        }
+
+        #virtual-canvas {
+            display: none; /* 가상 카메라 생성용 숨김 캔버스 */
+        }
+
+        #filter-bar {
+            position: fixed;
+            bottom: 90px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            padding: 0 12px;
+            flex-wrap: wrap;
+            z-index: 10;
+        }
+        .filter-btn {
+            background: rgba(20, 30, 50, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 30px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            min-width: 52px;
+            text-align: center;
+        }
+        .filter-btn:active { transform: scale(0.92); }
+        .filter-btn.active {
+            background: #4a7aff;
+            border-color: #8ab4ff;
+            box-shadow: 0 0 20px rgba(74,122,255,0.5);
+        }
+
+        #capture-btn {
+            position: fixed;
+            bottom: 28px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 68px;
+            height: 68px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, #ffffff, #b0c4ff);
+            border: 4px solid rgba(255,255,255,0.8);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+            cursor: pointer;
+            transition: 0.15s;
+            z-index: 10;
+        }
+        #capture-btn:active { transform: translateX(-50%) scale(0.88); }
+
+        #status {
+            position: fixed;
+            top: 20px;
+            color: rgba(255,255,255,0.5);
+            font-size: 12px;
+            background: rgba(0,0,0,0.5);
+            padding: 5px 14px;
+            border-radius: 20px;
+            backdrop-filter: blur(4px);
+            z-index: 20;
+            text-align: center;
+            max-width: 90%;
+        }
+
+        #mode-toggle {
+            position: fixed;
+            bottom: 100px;
+            right: 20px;
+            z-index: 10;
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(8px);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.2);
+            padding: 8px 14px;
+            border-radius: 30px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        #mode-toggle:active { transform: scale(0.92); }
+        #mode-toggle.real { border-color: #4a7aff; }
+        #mode-toggle.virtual { border-color: #ff6ec7; }
+    </style>
+</head>
+<body>
+
+    <div id="loading">
+        <div class="spinner"></div>
+        <div>🐍 Pyodide + NumPy 로딩중...</div>
+        <div style="font-size:14px; color:#888; margin-top:8px;">최초 1회 5~10초 소요</div>
+    </div>
+
+    <div id="status">📷 가상 카메라 대기중</div>
+
+    <div id="camera-container">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="preview-canvas"></canvas>
+    </div>
+
+    <!-- 가상 카메라 생성을 위한 숨김 캔버스 -->
+    <canvas id="virtual-canvas"></canvas>
+
+    <div id="filter-bar">
+        <button class="filter-btn active" data-filter="original">✨ 원본</button>
+        <button class="filter-btn" data-filter="indigo">💙 남색</button>
+        <button class="filter-btn" data-filter="noise">📺 노이즈</button>
+        <button class="filter-btn" data-filter="y2k">🌸 Y2K</button>
+    </div>
+
+    <button id="capture-btn" aria-label="사진 촬영"></button>
+    <button id="mode-toggle" class="virtual">🎥 가상</button>
+
+    <script>
+        // ================================================================
+        // 1. DOM 레퍼런스 및 전역 상태
+        // ================================================================
+        const video = document.getElementById('video');
+        const previewCanvas = document.getElementById('preview-canvas');
+        const ctx = previewCanvas.getContext('2d');
+        const virtualCanvas = document.getElementById('virtual-canvas');
+        const vCtx = virtualCanvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+        const loadingEl = document.getElementById('loading');
+        const captureBtn = document.getElementById('capture-btn');
+        const filterBtns = document.querySelectorAll('.filter-btn');
+        const modeToggle = document.getElementById('mode-toggle');
+
+        let currentFilter = 'original';
+        let cameraStream = null;
+        let animationId = null;
+        let pyodide = null;
+        let pythonApplyFilter = null;
+        let isPyReady = false;
+        let isVirtualMode = true; // 기본: 가상 모드
+        let virtualAnimId = null;
+        const container = document.getElementById('camera-container');
+
+        // ================================================================
+        // 2. Pyodide 초기화 + 외부 filter1.py 파일 불러오기 (레포 연동!)
+        // ================================================================
+        async function initPyodide() {
+            try {
+                statusEl.textContent = '🐍 Pyodide 설치 중...';
+                pyodide = await loadPyodide({
+                    indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.3/full/'
+                });
+
+                statusEl.textContent = '📦 NumPy 로딩 중...';
+                await pyodide.loadPackage('numpy');
+
+                // ⭐ 외부 filter1.py 파일을 fetch로 불러오기 (레포 속 파일과 연동)
+                statusEl.textContent = '📂 filter1.py 불러오는 중...';
+                const response = await fetch('filter1.py');
+                if (!response.ok) {
+                    throw new Error(`filter1.py 로드 실패 (HTTP ${response.status}). 같은 폴더에 있는지 확인하세요.`);
+                }
+                const pythonCode = await response.text();
+                pyodide.runPython(pythonCode);
+
+                pythonApplyFilter = pyodide.globals.get('apply_filter');
+                isPyReady = true;
+
+                statusEl.textContent = '✅ 파이썬 필터 준비 완료! (외부 파일)';
+                loadingEl.classList.add('hidden');
+                console.log('✅ Pyodide + filter1.py 로드 성공!');
+
+            } catch (err) {
+                console.error('Pyodide 초기화 실패:', err);
+                statusEl.textContent = '❌ 로드 실패: ' + err.message;
+                alert('filter1.py를 불러오지 못했습니다.\n' + err.message);
+            }
+        }
+
+        // ================================================================
+        // 3. 가상 카메라 생성 (canvas.captureStream)
+        // ================================================================
+        function createVirtualStream() {
+            // 가상 캔버스 크기 설정 (3:4 비율)
+            virtualCanvas.width = 480;
+            virtualCanvas.height = 640;
+
+            // 30fps 스트림 생성
+            const stream = virtualCanvas.captureStream(30);
+            return stream;
+        }
+
+        // 가상 캔버스에 프레임 그리기 (움직이는 패턴)
+        function drawVirtualFrame(time) {
+            const w = virtualCanvas.width;
+            const h = virtualCanvas.height;
+
+            // 1) 배경 (그라데이션)
+            const grad = vCtx.createLinearGradient(0, 0, w, h);
+            grad.addColorStop(0, `hsl(${(time * 0.02) % 360}, 70%, 30%)`);
+            grad.addColorStop(1, `hsl(${(time * 0.02 + 60) % 360}, 80%, 20%)`);
+            vCtx.fillStyle = grad;
+            vCtx.fillRect(0, 0, w, h);
+
+            // 2) 움직이는 원
+            const cx = w / 2 + Math.sin(time * 0.001) * 120;
+            const cy = h / 2 + Math.cos(time * 0.0013) * 150;
+            const radius = 60 + Math.sin(time * 0.002) * 20;
+            vCtx.beginPath();
+            vCtx.arc(cx, cy, radius, 0, Math.PI * 2);
+            vCtx.fillStyle = `hsl(${(time * 0.05) % 360}, 100%, 70%)`;
+            vCtx.fill();
+            vCtx.strokeStyle = '#fff';
+            vCtx.lineWidth = 4;
+            vCtx.stroke();
+
+            // 3) 움직이는 사각형 (반대편)
+            const rx = 50 + Math.sin(time * 0.0017 + 2) * 150;
+            const ry = 80 + Math.cos(time * 0.0021 + 1) * 200;
+            vCtx.fillStyle = `hsl(${(time * 0.03 + 120) % 360}, 90%, 60%)`;
+            vCtx.fillRect(rx, ry, 80, 80);
+            vCtx.strokeStyle = 'rgba(255,255,255,0.6)';
+            vCtx.lineWidth = 3;
+            vCtx.strokeRect(rx, ry, 80, 80);
+
+            // 4) 텍스트 (모드 표시)
+            vCtx.font = 'bold 28px system-ui, sans-serif';
+            vCtx.fillStyle = 'rgba(255,255,255,0.9)';
+            vCtx.shadowColor = 'rgba(0,0,0,0.8)';
+            vCtx.shadowBlur = 10;
+            vCtx.fillText('🎥 VIRTUAL', 20, 50);
+            vCtx.shadowBlur = 0;
+
+            // 5) 현재 시간
+            vCtx.font = '18px monospace';
+            vCtx.fillStyle = 'rgba(255,255,200,0.7)';
+            const now = new Date();
+            vCtx.fillText(now.toLocaleTimeString(), 20, h - 30);
+
+            // 6) 가이드 라인 (격자)
+            vCtx.strokeStyle = 'rgba(255,255,255,0.05)';
+            vCtx.lineWidth = 1;
+            for (let i = 0; i < w; i += 40) {
+                vCtx.beginPath();
+                vCtx.moveTo(i, 0);
+                vCtx.lineTo(i, h);
+                vCtx.stroke();
+            }
+            for (let i = 0; i < h; i += 40) {
+                vCtx.beginPath();
+                vCtx.moveTo(0, i);
+                vCtx.lineTo(w, i);
+                vCtx.stroke();
+            }
+        }
+
+        // ================================================================
+        // 4. 실제 카메라 시작 (기존 getUserMedia)
+        // ================================================================
+        function startRealCamera() {
+            const constraints = {
+                video: {
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: 640 },
+                    height: { ideal: 480 }
+                },
+                audio: false
+            };
+
+            return navigator.mediaDevices.getUserMedia(constraints);
+        }
+
+        // ================================================================
+        // 5. 스트림 시작/전환 (가상 or 실제)
+        // ================================================================
+        function stopStream() {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(t => t.stop());
+                cameraStream = null;
+            }
+            if (animationId) cancelAnimationFrame(animationId);
+            if (virtualAnimId) cancelAnimationFrame(virtualAnimId);
+            video.srcObject = null;
+        }
+
+        async function startStream(mode) {
+            stopStream();
+
+            if (mode === 'virtual') {
+                // 가상 모드
+                const stream = createVirtualStream();
+                cameraStream = stream;
+                video.srcObject = stream;
+
+                // 가상 프레임 애니메이션 시작
+                let frameCount = 0;
+                function drawVirtualLoop(time) {
+                    drawVirtualFrame(time);
+                    virtualAnimId = requestAnimationFrame(drawVirtualLoop);
+                }
+                virtualAnimId = requestAnimationFrame(drawVirtualLoop);
+
+                // video 메타데이터가 바로 준비되므로 수동 이벤트 발생
+                video.onloadedmetadata = () => {
+                    video.play();
+                    resizeCanvas();
+                    if (animationId) cancelAnimationFrame(animationId);
+                    drawLoop();
+                };
+                // captureStream은 이미 메타데이터가 있으므로 바로 트리거
+                setTimeout(() => {
+                    if (video.readyState < 1) {
+                        video.dispatchEvent(new Event('loadedmetadata'));
+                    }
+                }, 50);
+                statusEl.textContent = '🎥 가상 카메라 ON';
+                modeToggle.textContent = '🎥 가상';
+                modeToggle.className = 'virtual';
+
+            } else {
+                // 실제 카메라 모드
+                try {
+                    const stream = await startRealCamera();
+                    cameraStream = stream;
+                    video.srcObject = stream;
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        resizeCanvas();
+                        if (animationId) cancelAnimationFrame(animationId);
+                        drawLoop();
+                    };
+                    statusEl.textContent = '📷 실제 카메라 ON';
+                    modeToggle.textContent = '📷 실제';
+                    modeToggle.className = 'real';
+                } catch (err) {
+                    console.error('실제 카메라 오류:', err);
+                    statusEl.textContent = '⚠️ 실제 카메라 실패 → 가상으로 전환';
+                    alert('실제 카메라를 켤 수 없어 가상 모드로 전환합니다.\n' + err.message);
+                    isVirtualMode = true;
+                    await startStream('virtual');
+                }
+            }
+        }
+
+        // ================================================================
+        // 6. 미리보기 루프 (Canvas에 그리기)
+        // ================================================================
+        function resizeCanvas() {
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+            previewCanvas.width = w;
+            previewCanvas.height = h;
+        }
+
+        function drawLoop() {
+            if (!video.videoWidth) {
+                animationId = requestAnimationFrame(drawLoop);
+                return;
+            }
+            ctx.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
+            animationId = requestAnimationFrame(drawLoop);
+        }
+
+        // ================================================================
+        // 7. 사진 찍기 + 파이썬 필터 적용 + 저장
+        // ================================================================
+        async function captureAndFilter() {
+            if (!isPyReady) {
+                alert('파이썬 필터가 아직 준비되지 않았습니다.');
+                return;
+            }
+            if (!cameraStream) {
+                alert('카메라 스트림이 없습니다.');
+                return;
+            }
+
+            const width = previewCanvas.width;
+            const height = previewCanvas.height;
+            const imageData = ctx.getImageData(0, 0, width, height);
+
+            console.log(`📸 캡처: ${width}x${height}, 필터: ${currentFilter}, 모드: ${isVirtualMode ? '가상' : '실제'}`);
+
+            const np = pyodide.globals.get('np');
+            const jsArray = new Uint8Array(imageData.data.buffer);
+            const npArray = np.array(jsArray).reshape([height, width, 4]);
+
+            statusEl.textContent = '🎨 필터 적용 중...';
+            const startTime = performance.now();
+
+            let resultArray;
+            try {
+                resultArray = pythonApplyFilter(npArray, currentFilter);
+            } catch (err) {
+                console.error('❌ 필터 오류:', err);
+                statusEl.textContent = '❌ 필터 오류!';
+                alert('파이썬 필터 오류: ' + err);
+                return;
+            }
+
+            const elapsed = (performance.now() - startTime).toFixed(0);
+            console.log(`✅ 필터 완료: ${elapsed}ms`);
+            statusEl.textContent = `✅ 완료 (${elapsed}ms)`;
+
+            const resultData = resultArray.toJs();
+            const clampedData = new Uint8ClampedArray(resultData.buffer);
+            const filteredImageData = new ImageData(clampedData, width, height);
+            ctx.putImageData(filteredImageData, 0, 0);
+
+            const link = document.createElement('a');
+            link.download = `debug_${currentFilter}_${Date.now()}.png`;
+            link.href = previewCanvas.toDataURL('image/png');
+            link.click();
+
+            statusEl.textContent = `💾 저장 완료! (${currentFilter})`;
+            setTimeout(() => {
+                if (cameraStream) {
+                    statusEl.textContent = isVirtualMode ? '🎥 가상 카메라 ON' : '📷 실제 카메라 ON';
+                }
+            }, 1500);
+        }
+
+        // ================================================================
+        // 8. 이벤트 리스너
+        // ================================================================
+        filterBtns.forEach(btn => {
+            btn.addEventListener('click', function() {
+                filterBtns.forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                currentFilter = this.dataset.filter;
+                const names = { original: '원본', indigo: '남색', noise: '노이즈', y2k: 'Y2K' };
+                statusEl.textContent = `🎨 ${names[currentFilter] || currentFilter} 선택`;
+                setTimeout(() => {
+                    if (cameraStream) {
+                        statusEl.textContent = isVirtualMode ? '🎥 가상 카메라 ON' : '📷 실제 카메라 ON';
+                    }
+                }, 1000);
+            });
+        });
+
+        captureBtn.addEventListener('click', captureAndFilter);
+
+        modeToggle.addEventListener('click', async function() {
+            isVirtualMode = !isVirtualMode;
+            const mode = isVirtualMode ? 'virtual' : 'real';
+            await startStream(mode);
+        });
+
+        window.addEventListener('resize', resizeCanvas);
+
+        // ================================================================
+        // 9. 실행
+        // ================================================================
+        async function init() {
+            await initPyodide();      // 1) Pyodide + filter1.py 로드
+            await startStream('virtual'); // 2) 기본: 가상 카메라로 시작
+        }
+
+        init();
+
+        window.addEventListener('beforeunload', () => {
+            stopStream();
+            if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+            if (animationId) cancelAnimationFrame(animationId);
+            if (virtualAnimId) cancelAnimationFrame(virtualAnimId);
+        });
+    </script>
+</body>
+</html>
