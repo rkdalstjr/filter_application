@@ -14,6 +14,14 @@ Python으로 작성된 이미지 필터를 **Pyodide**를 통해 브라우저에
 
 ---
 
+### GitHub Pages로 바로 사용
+
+아래 링크를 클릭하면 바로 사용할 수 있습니다:
+
+🔗 **https://rkdalstjr.github.io/filter_application/**
+
+---
+
 ## 🎯 주요 기능
 
 ### 📷 카메라
