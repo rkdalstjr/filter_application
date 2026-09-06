@@ -429,21 +429,71 @@
 
                     const imageData = ctx.getImageData(0, 0, w, h);
                     const np = pyodide.globals.get('np');
-                    const jsArray = new Uint8Array(imageData.data.buffer.slice(0));
+
+                    // Canvas RGBA -> NumPy (복사본을 만들어 PyProxy 수명 문제 방지)
+                    const jsArray = new Uint8Array(imageData.data);
                     const npArray = np.array(jsArray).reshape([h, w, 4]);
+
+                    // Python 필터 실행
                     const resultArray = pythonApplyFilter(npArray, currentFilter);
 
-                    const resultData = resultArray.toJs();
-                    const clampedData = new Uint8ClampedArray(resultData);
-                    if (clampedData.length !== w * h * 4) {
-                        throw new Error(`필터 결과 크기가 잘못되었습니다: ${clampedData.length}`);
+                    // ----------------------------------------------------
+                    // 중요: NumPy 결과를 반드시 1차원 uint8 RGBA로 정규화
+                    // 기존 코드는 resultArray.toJs() 결과 형태에 따라
+                    // 배열 길이가 469처럼 잘못 인식될 수 있었음.
+                    // ----------------------------------------------------
+                    let flatResult;
+                    let resultProxy = null;
+
+                    try {
+                        // uint8 + 1차원으로 강제
+                        resultProxy = resultArray.astype(np.uint8).reshape(-1);
+                        const jsResult = resultProxy.toJs({ create_proxies: false });
+
+                        // Pyodide 버전에 따라 Uint8Array 또는 일반 Array로 반환될 수 있음
+                        if (jsResult instanceof Uint8Array ||
+                            jsResult instanceof Uint8ClampedArray) {
+                            flatResult = new Uint8ClampedArray(jsResult);
+                        } else if (Array.isArray(jsResult)) {
+                            flatResult = Uint8ClampedArray.from(jsResult);
+                        } else if (jsResult && typeof jsResult.length === 'number') {
+                            flatResult = Uint8ClampedArray.from(jsResult);
+                        } else {
+                            throw new Error('Python 필터 결과를 JavaScript 배열로 변환할 수 없습니다.');
+                        }
+                    } finally {
+                        try { resultProxy?.destroy(); } catch (_) {}
                     }
-                    ctx.putImageData(new ImageData(clampedData, w, h), 0, 0);
+
+                    const expectedLength = w * h * 4;
+
+                    if (flatResult.length !== expectedLength) {
+                        // RGB(3채널) 결과라면 알파 채널을 추가하여 RGBA로 변환
+                        const expectedRGBLength = w * h * 3;
+
+                        if (flatResult.length === expectedRGBLength) {
+                            const rgba = new Uint8ClampedArray(expectedLength);
+
+                            for (let i = 0, j = 0; i < flatResult.length; i += 3, j += 4) {
+                                rgba[j] = flatResult[i];
+                                rgba[j + 1] = flatResult[i + 1];
+                                rgba[j + 2] = flatResult[i + 2];
+                                rgba[j + 3] = 255;
+                            }
+
+                            flatResult = rgba;
+                        } else {
+                            throw new Error(
+                                `필터 결과 크기가 잘못되었습니다: ${flatResult.length} (필요: ${expectedLength})`
+                            );
+                        }
+                    }
+
+                    ctx.putImageData(new ImageData(flatResult, w, h), 0, 0);
 
                     // PyProxy 자원 해제
                     try { resultArray.destroy(); } catch (_) {}
                     try { npArray.destroy(); } catch (_) {}
-                    try { resultData.destroy?.(); } catch (_) {}
                 }
 
                 // 여기서부터는 '촬영 결과 확인' 상태. 카메라 화면을 다시 그리지 않음.
