@@ -78,6 +78,87 @@
             background: #111;
         }
 
+        /* ===== 9분할 그리드 오버레이 ===== */
+        #grid-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 5;
+            opacity: 0.6;
+            transition: opacity 0.3s ease;
+        }
+        #grid-overlay.hidden {
+            opacity: 0;
+        }
+        .grid-line {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.7);
+        }
+        .grid-line.horizontal {
+            left: 0;
+            right: 0;
+            height: 1px;
+        }
+        .grid-line.horizontal:nth-child(1) {
+            top: 33.33%;
+        }
+        .grid-line.horizontal:nth-child(2) {
+            top: 66.66%;
+        }
+        .grid-line.vertical {
+            top: 0;
+            bottom: 0;
+            width: 1px;
+        }
+        .grid-line.vertical:nth-child(3) {
+            left: 33.33%;
+        }
+        .grid-line.vertical:nth-child(4) {
+            left: 66.66%;
+        }
+        /* 중앙 점 (선택사항) */
+        .center-dot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 6px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+
+        /* ===== 그리드 토글 버튼 ===== */
+        #grid-toggle {
+            position: fixed;
+            bottom: 175px;
+            left: 20px;
+            z-index: 15;
+            background: rgba(20, 30, 50, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.15);
+            color: #fff;
+            padding: 8px 14px;
+            border-radius: 30px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        }
+        #grid-toggle:active {
+            transform: scale(0.92);
+        }
+        #grid-toggle.active {
+            background: rgba(74, 122, 255, 0.5);
+            border-color: #4a7aff;
+        }
+
         /* 필터 바 (가로 스크롤) */
         #filter-bar-wrapper {
             position: fixed;
@@ -126,6 +207,10 @@
             background: rgba(255,100,200,0.2);
             border-color: #ff6ec7;
         }
+        .filter-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
 
         /* 버튼 영역 (촬영 + 저장 분리) */
         #button-area {
@@ -152,6 +237,11 @@
             flex-shrink: 0;
         }
         #capture-btn:active { transform: scale(0.88); }
+        #capture-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none;
+        }
 
         #save-btn {
             padding: 12px 24px;
@@ -186,7 +276,6 @@
             transition: 0.15s;
             flex-shrink: 0;
         }
-
         #retake-btn:active { transform: scale(0.94); }
 
         #status {
@@ -232,7 +321,19 @@
     <div id="camera-container">
         <video id="video" playsinline autoplay muted></video>
         <canvas id="preview-canvas"></canvas>
+
+        <!-- 9분할 그리드 오버레이 -->
+        <div id="grid-overlay">
+            <div class="grid-line horizontal"></div>
+            <div class="grid-line horizontal"></div>
+            <div class="grid-line vertical"></div>
+            <div class="grid-line vertical"></div>
+            <div class="center-dot"></div>
+        </div>
     </div>
+
+    <!-- 그리드 토글 버튼 -->
+    <button id="grid-toggle" class="active">⊞ 그리드</button>
 
     <div id="filter-bar-wrapper">
         <div id="filter-bar">
@@ -247,6 +348,9 @@
             <button class="filter-btn" data-filter="warm">☀️ 따뜻한</button>
             <button class="filter-btn" data-filter="cool">❄️ 차가운</button>
             <button class="filter-btn" data-filter="pixelate">🧊 픽셀화</button>
+            <button class="filter-btn" data-filter="fisheye">🐟 어안</button>
+            <button class="filter-btn" data-filter="bulge">🔍 볼록</button>
+            <button class="filter-btn" data-filter="pinch">🔮 오목</button>
             <button class="filter-btn roadmap" onclick="location.href='roadmap.html'">🗺️ 로드맵</button>
         </div>
     </div>
@@ -273,6 +377,8 @@
         const retakeBtn = document.getElementById('retake-btn');
         const saveBtn = document.getElementById('save-btn');
         const filterBtns = document.querySelectorAll('.filter-btn:not(.roadmap)');
+        const gridOverlay = document.getElementById('grid-overlay');
+        const gridToggle = document.getElementById('grid-toggle');
 
         let currentFilter = 'original';
         let cameraStream = null;
@@ -282,13 +388,24 @@
         let isPyReady = false;
         let isFilterApplied = false;
         let isCaptured = false;
-        let isReviewMode = false; // 촬영 결과를 확인하는 상태
-        let capturedFilter = 'original'; // 실제 저장될 사진에 적용된 필터
-        let capturedImageDataUrl = null; // 저장할 최종 결과를 보관
+        let isReviewMode = false;
+        let capturedFilter = 'original';
+        let capturedImageDataUrl = null;
+        let isGridVisible = true;
         const container = document.getElementById('camera-container');
 
         // ============================================================
-        // 2. Pyodide 초기화 + filter*.py 자동 로드
+        // 2. 그리드 토글
+        // ============================================================
+        gridToggle.addEventListener('click', function() {
+            isGridVisible = !isGridVisible;
+            this.classList.toggle('active');
+            gridOverlay.classList.toggle('hidden');
+            this.textContent = isGridVisible ? '⊞ 그리드' : '⊟ 그리드';
+        });
+
+        // ============================================================
+        // 3. Pyodide 초기화 + filter*.py 자동 로드
         // ============================================================
         async function initPyodide() {
             try {
@@ -337,7 +454,7 @@
         }
 
         // ============================================================
-        // 3. 카메라 시작
+        // 4. 카메라 시작
         // ============================================================
         function startCamera() {
             const constraints = {
@@ -377,10 +494,9 @@
         }
 
         // ============================================================
-        // 4. 실시간 카메라 미리보기
+        // 5. 실시간 카메라 미리보기
         // ============================================================
         function drawLoop() {
-            // 리뷰 화면에서는 캔버스를 건드리지 않고 촬영 결과를 그대로 유지
             if (isReviewMode) return;
 
             if (!video.videoWidth) {
@@ -393,7 +509,7 @@
         }
 
         // ============================================================
-        // 5. 촬영 → 필터 적용 → 결과 확인 화면
+        // 6. 촬영 → 필터 적용 → 결과 확인 화면
         // ============================================================
         async function captureAndApplyFilter() {
             if (isReviewMode || captureBtn.disabled) return;
@@ -416,7 +532,6 @@
             captureBtn.disabled = true;
             statusEl.textContent = '📸 사진 촬영 중...';
 
-            // 화면 표시용 캔버스 크기와 동일한 프레임을 캡처
             const w = previewCanvas.width;
             const h = previewCanvas.height;
             ctx.drawImage(video, 0, 0, w, h);
@@ -430,27 +545,18 @@
                     const imageData = ctx.getImageData(0, 0, w, h);
                     const np = pyodide.globals.get('np');
 
-                    // Canvas RGBA -> NumPy (복사본을 만들어 PyProxy 수명 문제 방지)
                     const jsArray = new Uint8Array(imageData.data);
                     const npArray = np.array(jsArray).reshape([h, w, 4]);
 
-                    // Python 필터 실행
                     const resultArray = pythonApplyFilter(npArray, currentFilter);
 
-                    // ----------------------------------------------------
-                    // 중요: NumPy 결과를 반드시 1차원 uint8 RGBA로 정규화
-                    // 기존 코드는 resultArray.toJs() 결과 형태에 따라
-                    // 배열 길이가 469처럼 잘못 인식될 수 있었음.
-                    // ----------------------------------------------------
                     let flatResult;
                     let resultProxy = null;
 
                     try {
-                        // uint8 + 1차원으로 강제
                         resultProxy = resultArray.astype(np.uint8).reshape(-1);
                         const jsResult = resultProxy.toJs({ create_proxies: false });
 
-                        // Pyodide 버전에 따라 Uint8Array 또는 일반 Array로 반환될 수 있음
                         if (jsResult instanceof Uint8Array ||
                             jsResult instanceof Uint8ClampedArray) {
                             flatResult = new Uint8ClampedArray(jsResult);
@@ -468,19 +574,16 @@
                     const expectedLength = w * h * 4;
 
                     if (flatResult.length !== expectedLength) {
-                        // RGB(3채널) 결과라면 알파 채널을 추가하여 RGBA로 변환
                         const expectedRGBLength = w * h * 3;
 
                         if (flatResult.length === expectedRGBLength) {
                             const rgba = new Uint8ClampedArray(expectedLength);
-
                             for (let i = 0, j = 0; i < flatResult.length; i += 3, j += 4) {
                                 rgba[j] = flatResult[i];
                                 rgba[j + 1] = flatResult[i + 1];
                                 rgba[j + 2] = flatResult[i + 2];
                                 rgba[j + 3] = 255;
                             }
-
                             flatResult = rgba;
                         } else {
                             throw new Error(
@@ -491,12 +594,10 @@
 
                     ctx.putImageData(new ImageData(flatResult, w, h), 0, 0);
 
-                    // PyProxy 자원 해제
                     try { resultArray.destroy(); } catch (_) {}
                     try { npArray.destroy(); } catch (_) {}
                 }
 
-                // 여기서부터는 '촬영 결과 확인' 상태. 카메라 화면을 다시 그리지 않음.
                 isFilterApplied = true;
                 isCaptured = true;
                 isReviewMode = true;
@@ -505,7 +606,6 @@
                 retakeBtn.hidden = false;
                 filterBtns.forEach(btn => btn.disabled = true);
 
-                // 저장 전에 Blob/Data URL을 확보하여 결과 화면과 동일한 이미지를 저장
                 capturedImageDataUrl = previewCanvas.toDataURL('image/png');
                 statusEl.textContent = '✅ 촬영 완료 — 사진이 마음에 들면 저장하세요.';
             } catch (err) {
@@ -521,7 +621,7 @@
         }
 
         // ============================================================
-        // 6. 다시 촬영 → 카메라 화면 복귀
+        // 7. 다시 촬영 → 카메라 화면 복귀
         // ============================================================
         function retakePhoto() {
             isCaptured = false;
@@ -534,7 +634,6 @@
             retakeBtn.hidden = true;
             filterBtns.forEach(btn => btn.disabled = false);
 
-            // 즉시 현재 카메라 프레임을 표시하고 drawLoop 재개
             if (video.videoWidth) {
                 ctx.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
             }
@@ -544,7 +643,7 @@
         }
 
         // ============================================================
-        // 7. 저장
+        // 8. 저장
         // ============================================================
         async function saveImage() {
             if (!isCaptured || !isReviewMode || !capturedImageDataUrl) {
@@ -556,7 +655,6 @@
             const fileName = `filter_${capturedFilter}_${Date.now()}.png`;
 
             try {
-                // 현재 결과 화면과 정확히 같은 PNG를 저장
                 const response = await fetch(capturedImageDataUrl);
                 const blob = await response.blob();
                 const url = URL.createObjectURL(blob);
@@ -572,7 +670,6 @@
                 isCaptured = false;
                 capturedImageDataUrl = null;
 
-                // 저장 후에는 다시 카메라 상태로 돌아감
                 isReviewMode = false;
                 isFilterApplied = false;
                 captureBtn.hidden = false;
@@ -589,7 +686,6 @@
                 console.error('저장 오류:', err);
                 saveBtn.disabled = false;
 
-                // iOS/일부 모바일 브라우저용 fallback
                 try {
                     const link = document.createElement('a');
                     link.download = fileName;
@@ -606,10 +702,9 @@
         }
 
         // ============================================================
-        // 8. 이벤트 리스너
+        // 9. 이벤트 리스너
         // ============================================================
 
-        // 필터 버튼: 촬영 전에만 변경 가능
         filterBtns.forEach(btn => {
             btn.addEventListener('click', function() {
                 if (isReviewMode) return;
@@ -624,13 +719,8 @@
             });
         });
 
-        // 촬영 버튼: 현재 프레임을 찍고 결과 화면으로 전환
         captureBtn.addEventListener('click', captureAndApplyFilter);
-
-        // 다시 촬영: 결과를 버리고 카메라로 복귀
         retakeBtn.addEventListener('click', retakePhoto);
-
-        // 저장: 결과 화면의 이미지를 저장
         saveBtn.addEventListener('click', saveImage);
 
         window.addEventListener('resize', () => {
@@ -640,7 +730,7 @@
         });
 
         // ============================================================
-        // 9. 실행
+        // 10. 실행
         // ============================================================
         async function init() {
             await initPyodide();
