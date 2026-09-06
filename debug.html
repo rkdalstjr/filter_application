@@ -232,17 +232,41 @@
                 statusEl.textContent = '📦 NumPy 로딩 중...';
                 await pyodide.loadPackage('numpy');
 
-                // ⭐ 외부 filter1.py 파일을 fetch로 불러오기 (레포 속 파일과 연동)
-                statusEl.textContent = '📂 filter1.py 불러오는 중...';
-                const response = await fetch('filter1.py');
-                if (!response.ok) {
-                    throw new Error(`filter1.py 로드 실패 (HTTP ${response.status}). 같은 폴더에 있는지 확인하세요.`);
+                // ⭐ 모든 filter*.py 파일을 자동으로 불러오기 (filter1.py ~ filter10.py)
+                let loadedCount = 0;
+                for (let i = 1; i <= 10; i++) {
+                    try {
+                        const filename = `debug_${currentFilter}_${Date.now()}.png`;
+                        statusEl.textContent = `📂 ${filename} 불러오는 중...`;
+                        const response = await fetch(filename);
+                        if (!response.ok) {
+                            // 404면 더 이상 파일이 없다고 판단하고 중단
+                            if (response.status === 404) break;
+                            throw new Error(`${filename} 로드 실패 (HTTP ${response.status})`);
+                        }
+                        const pythonCode = await response.text();
+                        pyodide.runPython(pythonCode);
+                        loadedCount++;
+                        console.log(`✅ ${filename} 로드 성공`);
+                    } catch (err) {
+                        console.warn('필터 파일 로드 중단:', err);
+                        break;
+                    }
                 }
-                const pythonCode = await response.text();
-                pyodide.runPython(pythonCode);
 
+                // 마지막으로 로드된 파일의 apply_filter를 사용
                 pythonApplyFilter = pyodide.globals.get('apply_filter');
+                if (!pythonApplyFilter) {
+                    throw new Error('로드된 필터 파일에 apply_filter 함수가 없습니다.');
+                }
                 isPyReady = true;
+                statusEl.textContent = `✅ 파이썬 필터 준비 완료! (${loadedCount}개 파일 로드)`;
+                loadingEl.classList.add('hidden');
+                console.log(`Pyodide + ${loadedCount}개의 filter 파일 로드 성공!`);
+
+                statusEl.textContent = '✅ 파이썬 필터 준비 완료!';
+                loadingEl.classList.add('hidden');
+                console.log('Pyodide + filter1.py 로드 성공!');
 
                 statusEl.textContent = '✅ 파이썬 필터 준비 완료! (외부 파일)';
                 loadingEl.classList.add('hidden');
