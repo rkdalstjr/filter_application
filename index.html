@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>📸 파이썬 필터 카메라</title>
+
+    <!-- Pyodide 로드 (PyScript보다 가볍고 직접 제어 가능) -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            background: #0a0a12;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: system-ui, -apple-system, sans-serif;
+            padding: 16px;
+            touch-action: none;
+        }
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #0a0a12;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            z-index: 999;
+            font-size: 18px;
+            transition: opacity 0.5s;
+        }
+        #loading.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        #loading .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #333;
+            border-top: 4px solid #4a7aff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        #camera-container {
+            position: relative;
+            width: 100%;
+            max-width: 420px;
+            aspect-ratio: 3 / 4;
+            background: #000;
+            border-radius: 28px;
+            overflow: hidden;
+            box-shadow: 0 10px 50px rgba(0,20,80,0.7);
+        }
+        #camera-container video {
+            display: none; /* 미리보기는 canvas로만 처리 */
+        }
+        #preview-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            object-fit: cover;
+            background: #111;
+        }
+
+        /* 필터 버튼 영역 */
+        #filter-bar {
+            position: fixed;
+            bottom: 90px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            padding: 0 12px;
+            flex-wrap: wrap;
+            z-index: 10;
+        }
+        .filter-btn {
+            background: rgba(20, 30, 50, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 30px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            min-width: 52px;
+            text-align: center;
+        }
+        .filter-btn:active { transform: scale(0.92); }
+        .filter-btn.active {
+            background: #4a7aff;
+            border-color: #8ab4ff;
+            box-shadow: 0 0 20px rgba(74,122,255,0.5);
+        }
+
+        #capture-btn {
+            position: fixed;
+            bottom: 28px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 68px;
+            height: 68px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, #ffffff, #b0c4ff);
+            border: 4px solid rgba(255,255,255,0.8);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+            cursor: pointer;
+            transition: 0.15s;
+            z-index: 10;
+        }
+        #capture-btn:active { transform: translateX(-50%) scale(0.88); }
+
+        #status {
+            position: fixed;
+            top: 20px;
+            color: rgba(255,255,255,0.5);
+            font-size: 12px;
+            background: rgba(0,0,0,0.5);
+            padding: 5px 14px;
+            border-radius: 20px;
+            backdrop-filter: blur(4px);
+            z-index: 20;
+            text-align: center;
+        }
+
+        #download-link {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 로딩 오버레이 -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <div>🐍 Pyodide + NumPy 로딩중...</div>
+        <div style="font-size:14px; color:#888; margin-top:8px;">최초 1회 5~10초 소요</div>
+    </div>
+
+    <!-- 상태 표시줄 -->
+    <div id="status">📷 카메라 대기중</div>
+
+    <!-- 카메라 영역 -->
+    <div id="camera-container">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="preview-canvas"></canvas>
+    </div>
+
+    <!-- 필터 버튼 -->
+    <div id="filter-bar">
+        <button class="filter-btn active" data-filter="original">✨ 원본</button>
+        <button class="filter-btn" data-filter="indigo">💙 남색</button>
+        <button class="filter-btn" data-filter="noise">📺 노이즈</button>
+        <button class="filter-btn" data-filter="y2k">🌸 Y2K</button>
+    </div>
+
+    <!-- 촬영 버튼 -->
+    <button id="capture-btn" aria-label="사진 촬영"></button>
+
+    <!-- 다운로드용 숨김 링크 -->
+    <a id="download-link" download="filtered_photo.png">저장</a>
+
+    <script>
+        // ============================================================
+        // 1. DOM 레퍼런스
+        // ============================================================
+        const video = document.getElementById('video');
+        const previewCanvas = document.getElementById('preview-canvas');
+        const ctx = previewCanvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+        const loadingEl = document.getElementById('loading');
+        const captureBtn = document.getElementById('capture-btn');
+        const filterBtns = document.querySelectorAll('.filter-btn');
+        const downloadLink = document.getElementById('download-link');
+
+        // ============================================================
+        // 2. 전역 상태
+        // ============================================================
+        let currentFilter = 'original';
+        let cameraStream = null;
+        let animationId = null;
+        let pyodide = null;
+        let pythonApplyFilter = null; // Python 함수 레퍼런스
+        let isPyReady = false;
+
+        // 컨테이너 크기
+        const container = document.getElementById('camera-container');
+
+        // ============================================================
+        // 3. Pyodide 초기화 및 filters.py 로드 (레포 속 파이썬 연동!)
+        // ============================================================
+        async function initPyodide() {
+            try {
+                statusEl.textContent = '🐍 Pyodide 설치 중...';
+                // 1) Pyodide 인스턴스 생성
+                pyodide = await loadPyodide({
+                    indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.3/full/'
+                });
+
+                // 2) numpy 패키지 설치 (Pyodide에 내장)
+                statusEl.textContent = '📦 NumPy 로딩 중...';
+                await pyodide.loadPackage('numpy');
+
+                // 3) filters.py 파일을 fetch로 가져와서 Pyodide에서 실행 (레포 연동!)
+                statusEl.textContent = '📂 filters.py 불러오는 중...';
+                const response = await fetch('filters.py');
+                if (!response.ok) {
+                    throw new Error('filters.py 파일을 찾을 수 없습니다. 같은 폴더에 있는지 확인하세요.');
+                }
+                const pythonCode = await response.text();
+
+                // Pyodide 환경에서 코드 실행 (함수 정의)
+                pyodide.runPython(pythonCode);
+
+                // 4) Python 함수를 JavaScript로 가져오기
+                pythonApplyFilter = pyodide.globals.get('apply_filter');
+                isPyReady = true;
+
+                statusEl.textContent = '✅ 파이썬 필터 준비 완료!';
+                loadingEl.classList.add('hidden');
+                console.log('Pyodide + filters.py 로드 성공!');
+
+            } catch (err) {
+                console.error('Pyodide 초기화 실패:', err);
+                statusEl.textContent = '❌ 파이썬 로드 실패: ' + err.message;
+                alert('filters.py 로드에 실패했습니다.\n네트워크 또는 파일 경로를 확인하세요.');
+            }
+        }
+
+        // ============================================================
+        // 4. 카메라 시작
+        // ============================================================
+        function startCamera() {
+            const constraints = {
+                video: {
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: 640 },
+                    height: { ideal: 480 }
+                },
+                audio: false
+            };
+
+            navigator.mediaDevices.getUserMedia(constraints)
+                .then(stream => {
+                    cameraStream = stream;
+                    video.srcObject = stream;
+                    statusEl.textContent = '📷 카메라 ON';
+
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        // 캔버스 크기 설정
+                        resizeCanvas();
+                        // 드로우 루프 시작
+                        if (animationId) cancelAnimationFrame(animationId);
+                        drawLoop();
+                    };
+                })
+                .catch(err => {
+                    console.error('카메라 에러:', err);
+                    statusEl.textContent = '⚠️ 카메라 접근 실패 (HTTPS 필요)';
+                    alert('카메라를 켤 수 없습니다.\nHTTPS 환경에서 열어주세요.\n' + err.message);
+                });
+        }
+
+        function resizeCanvas() {
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+            previewCanvas.width = w;
+            previewCanvas.height = h;
+        }
+
+        // ============================================================
+        // 5. 실시간 미리보기 (JS Canvas, 필터 없이 빠르게)
+        // ============================================================
+        function drawLoop() {
+            if (!video.videoWidth) {
+                animationId = requestAnimationFrame(drawLoop);
+                return;
+            }
+            // 캔버스에 비디오 프레임 그리기 (크기 맞춤)
+            ctx.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
+            animationId = requestAnimationFrame(drawLoop);
+        }
+
+        // ============================================================
+        // 6. 사진 찍기 & 파이썬 필터 적용 & 저장
+        // ============================================================
+        async function captureAndFilter() {
+            if (!isPyReady) {
+                alert('아직 파이썬 필터가 준비되지 않았습니다. 잠시만 기다려주세요.');
+                return;
+            }
+            if (!cameraStream) {
+                alert('카메라가 켜져 있지 않습니다.');
+                return;
+            }
+
+            // 1) 현재 미리보기 캔버스에서 이미지 데이터 추출 (고화질)
+            const width = previewCanvas.width;
+            const height = previewCanvas.height;
+            const imageData = ctx.getImageData(0, 0, width, height); // {data: Uint8ClampedArray, width, height}
+
+            // 2) Uint8ClampedArray -> Python의 numpy array로 변환 (Pyodide 메모리로 복사)
+            //    Pyodide는 JavaScript TypedArray를 그대로 numpy 배열로 받을 수 있음!
+            const jsArray = new Uint8Array(imageData.data.buffer); // Clamped -> 일반 Uint8로 복사 없이 뷰
+            // Pyodide의 numpy는 js 배열을 받아들임
+            const np = pyodide.globals.get('np');
+            // (height, width, 4) 형태로 reshape
+            const npArray = np.array(jsArray).reshape([height, width, 4]);
+
+            // 3) 파이썬 필터 함수 호출
+            statusEl.textContent = '🎨 파이썬 필터 적용 중...';
+            const startTime = performance.now();
+
+            let resultArray;
+            try {
+                // apply_filter(npArray, currentFilter) 호출
+                resultArray = pythonApplyFilter(npArray, currentFilter);
+            } catch (err) {
+                console.error('필터 적용 오류:', err);
+                statusEl.textContent = '❌ 필터 오류';
+                alert('파이썬 필터 실행 중 오류가 발생했습니다.\n' + err);
+                return;
+            }
+
+            const elapsed = (performance.now() - startTime).toFixed(0);
+            statusEl.textContent = `✅ 필터 적용 완료 (${elapsed}ms)`;
+
+            // 4) 결과 numpy 배열을 다시 JavaScript Uint8Array로 변환
+            const resultData = resultArray.toJs(); // TypedArray로 변환
+            const clampedData = new Uint8ClampedArray(resultData.buffer);
+
+            // 5) 새로운 ImageData 생성하여 캔버스에 그리기 (결과 미리보기)
+            const filteredImageData = new ImageData(clampedData, width, height);
+            ctx.putImageData(filteredImageData, 0, 0);
+
+            // 6) 이미지 다운로드 (PNG 저장)
+            const link = document.createElement('a');
+            link.download = `filter_${currentFilter}_${Date.now()}.png`;
+            link.href = previewCanvas.toDataURL('image/png');
+            link.click();
+
+            statusEl.textContent = `💾 저장 완료! (${currentFilter} 필터)`;
+            // 1초 후 상태 복원
+            setTimeout(() => {
+                statusEl.textContent = '📷 카메라 ON';
+            }, 1500);
+        }
+
+        // ============================================================
+        // 7. 이벤트 리스너
+        // ============================================================
+
+        // 필터 버튼 전환 (UI만 업데이트, 실제 필터는 캡처 시 적용)
+        filterBtns.forEach(btn => {
+            btn.addEventListener('click', function() {
+                filterBtns.forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                currentFilter = this.dataset.filter;
+                // 상태에 필터명 표시
+                const names = {
+                    original: '원본',
+                    indigo: '남색',
+                    noise: '노이즈',
+                    y2k: 'Y2K'
+                };
+                statusEl.textContent = `🎨 ${names[currentFilter] || currentFilter} (캡처 시 적용)`;
+                setTimeout(() => {
+                    if (cameraStream) statusEl.textContent = '📷 카메라 ON';
+                }, 1200);
+            });
+        });
+
+        // 촬영 버튼
+        captureBtn.addEventListener('click', captureAndFilter);
+
+        // 윈도우 리사이즈
+        window.addEventListener('resize', resizeCanvas);
+
+        // ============================================================
+        // 8. 실행 시작
+        // ============================================================
+        async function init() {
+            await initPyodide();   // 1) 파이썬 + 필터 로드
+            startCamera();         // 2) 카메라 시작
+        }
+
+        init();
+
+        // 페이지 나갈 때 스트림 정리
+        window.addEventListener('beforeunload', () => {
+            if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+            if (animationId) cancelAnimationFrame(animationId);
+        });
+    </script>
+</body>
+</html>
