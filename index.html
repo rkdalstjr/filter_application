@@ -141,6 +141,7 @@
             backdrop-filter: blur(4px);
             z-index: 20;
             text-align: center;
+            max-width: 90%;
         }
     </style>
 </head>
@@ -186,6 +187,7 @@
         let pyodide = null;
         let pythonApplyFilter = null;
         let isPyReady = false;
+        let isFilterApplied = false; // 필터가 적용된 상태인지
         const container = document.getElementById('camera-container');
 
         // ============================================================
@@ -201,7 +203,6 @@
                 statusEl.textContent = '📦 NumPy 로딩 중...';
                 await pyodide.loadPackage('numpy');
 
-                // filter1.py ~ filter10.py 자동 로드
                 let loadedCount = 0;
                 for (let i = 1; i <= 10; i++) {
                     try {
@@ -279,21 +280,24 @@
         }
 
         // ============================================================
-        // 4. 실시간 미리보기
+        // 4. 실시간 미리보기 (원본 카메라 스트림)
         // ============================================================
         function drawLoop() {
             if (!video.videoWidth) {
                 animationId = requestAnimationFrame(drawLoop);
                 return;
             }
-            ctx.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
+            // 필터가 적용되지 않은 상태면 카메라 원본을 그림
+            if (!isFilterApplied) {
+                ctx.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
+            }
             animationId = requestAnimationFrame(drawLoop);
         }
 
         // ============================================================
-        // 5. 사진 찍기 + 파이썬 필터 적용 + 저장 (새 탭 열기 방식)
+        // 5. 필터 적용 (현재 프레임 캡처 → 파이썬 필터 → 캔버스에 표시)
         // ============================================================
-        async function captureAndFilter() {
+        async function applyFilterToCurrentFrame() {
             if (!isPyReady) {
                 alert('아직 파이썬 필터가 준비되지 않았습니다.');
                 return;
@@ -303,6 +307,14 @@
                 return;
             }
 
+            // "원본" 필터면 필터를 해제하고 원본 스트림으로 복귀
+            if (currentFilter === 'original') {
+                isFilterApplied = false;
+                statusEl.textContent = '📷 원본 카메라';
+                return;
+            }
+
+            // 현재 캔버스에 그려진 이미지(원본)를 캡처
             const width = previewCanvas.width;
             const height = previewCanvas.height;
             const imageData = ctx.getImageData(0, 0, width, height);
@@ -311,7 +323,7 @@
             const jsArray = new Uint8Array(imageData.data.buffer);
             const npArray = np.array(jsArray).reshape([height, width, 4]);
 
-            statusEl.textContent = '🎨 파이썬 필터 적용 중...';
+            statusEl.textContent = '🎨 필터 적용 중...';
             const startTime = performance.now();
 
             let resultArray;
@@ -332,26 +344,53 @@
             const filteredImageData = new ImageData(clampedData, width, height);
             ctx.putImageData(filteredImageData, 0, 0);
 
-            // ===== 저장 부분 (새 탭 열기 + fallback) =====
+            isFilterApplied = true; // 필터가 적용된 상태로 표시
+        }
+
+        // ============================================================
+        // 6. 저장 (현재 캔버스 내용을 Blob으로 다운로드)
+        // ============================================================
+        async function saveImage() {
+            if (!cameraStream) {
+                alert('카메라가 켜져 있지 않습니다.');
+                return;
+            }
+
             const fileName = `filter_${currentFilter}_${Date.now()}.png`;
+
             try {
-                const dataURL = previewCanvas.toDataURL('image/png');
-                const newWindow = window.open(dataURL, '_blank');
-                if (newWindow) {
-                    statusEl.textContent = '🖼️ 새 탭에서 열림 (저장하려면 우클릭)';
-                } else {
-                    // 팝업 차단 시 다운로드 링크로 대체
+                // Canvas → Blob 변환 (가장 확실한 방법)
+                const blob = await new Promise(resolve => previewCanvas.toBlob(resolve, 'image/png'));
+                if (!blob) {
+                    throw new Error('Blob 생성 실패');
+                }
+
+                // Blob URL 생성 및 다운로드 링크 클릭
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.download = fileName;
+                link.href = url;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+                statusEl.textContent = `💾 저장 완료! (${currentFilter})`;
+            } catch (err) {
+                console.error('저장 오류:', err);
+                // 최후의 수단: data URL로 저장 시도
+                try {
+                    const dataURL = previewCanvas.toDataURL('image/png');
                     const link = document.createElement('a');
                     link.download = fileName;
                     link.href = dataURL;
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
-                    statusEl.textContent = `💾 다운로드 시도 (${currentFilter})`;
+                    statusEl.textContent = `💾 저장 완료 (fallback)`;
+                } catch (e2) {
+                    alert('이미지를 저장할 수 없습니다. 콘솔을 확인하세요.');
                 }
-            } catch (err) {
-                console.error('저장 오류:', err);
-                alert('이미지를 저장할 수 없습니다.');
             }
 
             setTimeout(() => {
@@ -360,31 +399,28 @@
         }
 
         // ============================================================
-        // 6. 이벤트 리스너
+        // 7. 이벤트 리스너
         // ============================================================
+
+        // 필터 버튼 클릭 → 필터 적용
         filterBtns.forEach(btn => {
-            btn.addEventListener('click', function() {
+            btn.addEventListener('click', async function() {
                 filterBtns.forEach(b => b.classList.remove('active'));
                 this.classList.add('active');
                 currentFilter = this.dataset.filter;
-                const names = {
-                    original: '원본',
-                    indigo: '남색',
-                    noise: '노이즈',
-                    y2k: 'Y2K'
-                };
-                statusEl.textContent = `🎨 ${names[currentFilter] || currentFilter} (캡처 시 적용)`;
-                setTimeout(() => {
-                    if (cameraStream) statusEl.textContent = '📷 카메라 ON';
-                }, 1200);
+
+                // 필터 적용 실행
+                await applyFilterToCurrentFrame();
             });
         });
 
-        captureBtn.addEventListener('click', captureAndFilter);
+        // 촬영 버튼 → 저장
+        captureBtn.addEventListener('click', saveImage);
+
         window.addEventListener('resize', resizeCanvas);
 
         // ============================================================
-        // 7. 실행
+        // 8. 실행
         // ============================================================
         async function init() {
             await initPyodide();
