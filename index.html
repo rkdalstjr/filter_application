@@ -314,21 +314,27 @@
             if (currentFilter === 'original') {
                 isFilterApplied = false;
                 statusEl.textContent = '📷 원본 카메라';
+                console.log('🔄 원본 모드로 전환');
                 return;
             }
 
-            // ===== ★★★ 수정된 부분 (필수) ★★★ =====
-            // 1) 현재 비디오 프레임을 캔버스에 명시적으로 그리기 (이게 없으면 빈 캔버스를 캡처함!)
+            console.log(`🎯 필터 적용 시작: ${currentFilter}`);
+
             const w = previewCanvas.width;
             const h = previewCanvas.height;
+            
+            // 1) 현재 비디오 프레임을 캔버스에 그림
             ctx.drawImage(video, 0, 0, w, h);
+            console.log('✅ 1) 비디오 프레임 캔버스에 그림');
 
-            // 2) 이제 캔버스에서 이미지 데이터 가져오기 (비디오 프레임이 그려져 있음)
+            // 2) 캔버스에서 이미지 데이터 가져오기
             const imageData = ctx.getImageData(0, 0, w, h);
+            console.log(`✅ 2) 이미지 데이터 가져옴 (${w}x${h})`);
 
             const np = pyodide.globals.get('np');
             const jsArray = new Uint8Array(imageData.data.buffer);
             const npArray = np.array(jsArray).reshape([h, w, 4]);
+            console.log('✅ 3) NumPy 배열로 변환 완료');
 
             statusEl.textContent = '🎨 필터 적용 중...';
             const startTime = performance.now();
@@ -336,8 +342,10 @@
             let resultArray;
             try {
                 resultArray = pythonApplyFilter(npArray, currentFilter);
+                console.log('✅ 4) 파이썬 필터 실행 완료');
+                console.log('   결과 배열 shape:', resultArray.shape);
             } catch (err) {
-                console.error('필터 적용 오류:', err);
+                console.error('❌ 필터 적용 오류:', err);
                 statusEl.textContent = '❌ 필터 오류';
                 alert('파이썬 필터 실행 중 오류가 발생했습니다.\n' + err);
                 return;
@@ -345,13 +353,17 @@
 
             const elapsed = (performance.now() - startTime).toFixed(0);
             statusEl.textContent = `✅ 필터 적용 완료 (${elapsed}ms)`;
+            console.log(`✅ 5) 필터 완료 (${elapsed}ms)`);
 
+            // 6) 결과를 캔버스에 다시 그리기
             const resultData = resultArray.toJs();
             const clampedData = new Uint8ClampedArray(resultData.buffer);
             const filteredImageData = new ImageData(clampedData, w, h);
             ctx.putImageData(filteredImageData, 0, 0);
+            console.log('✅ 6) 필터링된 이미지를 캔버스에 그림');
 
-            isFilterApplied = true; // 필터가 적용된 상태로 표시 (drawLoop가 덮어쓰지 않음)
+            isFilterApplied = true;
+            console.log('✅ 7) 필터 적용 상태로 설정 완료');
         }
 
         // ============================================================
