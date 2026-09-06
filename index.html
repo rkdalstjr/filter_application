@@ -135,7 +135,8 @@
             right: 0;
             display: flex;
             justify-content: center;
-            gap: 24px;
+            align-items: center;
+            gap: 18px;
             z-index: 10;
             padding: 0 20px;
         }
@@ -171,6 +172,22 @@
             cursor: not-allowed;
             transform: none;
         }
+
+        #retake-btn {
+            padding: 12px 20px;
+            border-radius: 40px;
+            background: rgba(25, 30, 45, 0.9);
+            border: 1px solid rgba(255,255,255,0.18);
+            color: #fff;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            transition: 0.15s;
+            flex-shrink: 0;
+        }
+
+        #retake-btn:active { transform: scale(0.94); }
 
         #status {
             position: fixed;
@@ -236,10 +253,11 @@
 
     <div class="scroll-hint">← 좌우로 밀어보세요 →</div>
 
-    <!-- 버튼 영역: 촬영 + 저장 분리 -->
+    <!-- 버튼 영역: 촬영 / 다시 촬영 / 저장 -->
     <div id="button-area">
-        <button id="capture-btn" aria-label="사진 촬영"></button>
-        <button id="save-btn" disabled>💾 저장</button>
+        <button id="retake-btn" type="button" hidden>↩️ 다시 촬영</button>
+        <button id="capture-btn" type="button" aria-label="사진 촬영"></button>
+        <button id="save-btn" type="button" disabled>💾 저장</button>
     </div>
 
     <script>
@@ -252,6 +270,7 @@
         const statusEl = document.getElementById('status');
         const loadingEl = document.getElementById('loading');
         const captureBtn = document.getElementById('capture-btn');
+        const retakeBtn = document.getElementById('retake-btn');
         const saveBtn = document.getElementById('save-btn');
         const filterBtns = document.querySelectorAll('.filter-btn:not(.roadmap)');
 
@@ -262,7 +281,10 @@
         let pythonApplyFilter = null;
         let isPyReady = false;
         let isFilterApplied = false;
-        let isCaptured = false; // 촬영 버튼을 눌렀는지
+        let isCaptured = false;
+        let isReviewMode = false; // 촬영 결과를 확인하는 상태
+        let capturedFilter = 'original'; // 실제 저장될 사진에 적용된 필터
+        let capturedImageDataUrl = null; // 저장할 최종 결과를 보관
         const container = document.getElementById('camera-container');
 
         // ============================================================
@@ -355,181 +377,220 @@
         }
 
         // ============================================================
-        // 4. 실시간 미리보기 (원본 카메라 스트림)
+        // 4. 실시간 카메라 미리보기
         // ============================================================
         function drawLoop() {
+            // 리뷰 화면에서는 캔버스를 건드리지 않고 촬영 결과를 그대로 유지
+            if (isReviewMode) return;
+
             if (!video.videoWidth) {
                 animationId = requestAnimationFrame(drawLoop);
                 return;
             }
-            // 필터가 적용되지 않은 상태면 카메라 원본을 그림
-            if (!isFilterApplied) {
-                ctx.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
-            }
+
+            ctx.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
             animationId = requestAnimationFrame(drawLoop);
         }
 
         // ============================================================
-        // 5. 필터 적용 (촬영 버튼 누를 때 실행)
+        // 5. 촬영 → 필터 적용 → 결과 확인 화면
         // ============================================================
         async function captureAndApplyFilter() {
-            if (!isPyReady) {
-                alert('아직 파이썬 필터가 준비되지 않았습니다.');
-                return;
-            }
+            if (isReviewMode || captureBtn.disabled) return;
+
             if (!cameraStream) {
                 alert('카메라가 켜져 있지 않습니다.');
                 return;
             }
 
-            // "원본" 필터면 그냥 현재 프레임을 캔버스에 표시 (필터 없이)
-            if (currentFilter === 'original') {
-                const w = previewCanvas.width;
-                const h = previewCanvas.height;
-                ctx.drawImage(video, 0, 0, w, h);
-                isFilterApplied = true;
-                isCaptured = true;
-                saveBtn.disabled = false;
-                statusEl.textContent = '📷 원본 캡처 완료 (저장 가능)';
-                console.log('✅ 원본 캡처 완료');
+            if (!isPyReady) {
+                alert('아직 파이썬 필터가 준비되지 않았습니다.');
                 return;
             }
 
-            console.log(`🎯 필터 캡처 시작: ${currentFilter}`);
+            if (!video.videoWidth || !video.videoHeight) {
+                alert('카메라 영상이 아직 준비되지 않았습니다.');
+                return;
+            }
 
+            captureBtn.disabled = true;
+            statusEl.textContent = '📸 사진 촬영 중...';
+
+            // 화면 표시용 캔버스 크기와 동일한 프레임을 캡처
             const w = previewCanvas.width;
             const h = previewCanvas.height;
-            
-            // 1) 현재 비디오 프레임을 캔버스에 그림
             ctx.drawImage(video, 0, 0, w, h);
-            console.log('✅ 1) 비디오 프레임 캔버스에 그림');
 
-            // 2) 캔버스에서 이미지 데이터 가져오기
-            const imageData = ctx.getImageData(0, 0, w, h);
-            console.log(`✅ 2) 이미지 데이터 가져옴 (${w}x${h})`);
+            capturedFilter = currentFilter;
 
-            const np = pyodide.globals.get('np');
-            const jsArray = new Uint8Array(imageData.data.buffer);
-            const npArray = np.array(jsArray).reshape([h, w, 4]);
-            console.log('✅ 3) NumPy 배열로 변환 완료');
-
-            statusEl.textContent = '🎨 필터 적용 중...';
-            const startTime = performance.now();
-
-            let resultArray;
             try {
-                resultArray = pythonApplyFilter(npArray, currentFilter);
-                console.log('✅ 4) 파이썬 필터 실행 완료');
-                console.log('   결과 배열 shape:', resultArray.shape);
+                if (currentFilter !== 'original') {
+                    statusEl.textContent = `🎨 ${currentFilter} 필터 적용 중...`;
+
+                    const imageData = ctx.getImageData(0, 0, w, h);
+                    const np = pyodide.globals.get('np');
+                    const jsArray = new Uint8Array(imageData.data.buffer.slice(0));
+                    const npArray = np.array(jsArray).reshape([h, w, 4]);
+                    const resultArray = pythonApplyFilter(npArray, currentFilter);
+
+                    const resultData = resultArray.toJs();
+                    const clampedData = new Uint8ClampedArray(resultData);
+                    if (clampedData.length !== w * h * 4) {
+                        throw new Error(`필터 결과 크기가 잘못되었습니다: ${clampedData.length}`);
+                    }
+                    ctx.putImageData(new ImageData(clampedData, w, h), 0, 0);
+
+                    // PyProxy 자원 해제
+                    try { resultArray.destroy(); } catch (_) {}
+                    try { npArray.destroy(); } catch (_) {}
+                    try { resultData.destroy?.(); } catch (_) {}
+                }
+
+                // 여기서부터는 '촬영 결과 확인' 상태. 카메라 화면을 다시 그리지 않음.
+                isFilterApplied = true;
+                isCaptured = true;
+                isReviewMode = true;
+                saveBtn.disabled = false;
+                captureBtn.hidden = true;
+                retakeBtn.hidden = false;
+                filterBtns.forEach(btn => btn.disabled = true);
+
+                // 저장 전에 Blob/Data URL을 확보하여 결과 화면과 동일한 이미지를 저장
+                capturedImageDataUrl = previewCanvas.toDataURL('image/png');
+                statusEl.textContent = '✅ 촬영 완료 — 사진이 마음에 들면 저장하세요.';
             } catch (err) {
-                console.error('❌ 필터 적용 오류:', err);
-                statusEl.textContent = '❌ 필터 오류';
-                alert('파이썬 필터 실행 중 오류가 발생했습니다.\n' + err);
-                return;
+                console.error('촬영/필터 적용 오류:', err);
+                statusEl.textContent = '❌ 필터 적용 실패';
+                alert('사진 처리 중 오류가 발생했습니다.\n' + (err?.message || err));
+                isCaptured = false;
+                isReviewMode = false;
+                isFilterApplied = false;
+            } finally {
+                captureBtn.disabled = false;
             }
-
-            const elapsed = (performance.now() - startTime).toFixed(0);
-            statusEl.textContent = `✅ 필터 적용 완료 (${elapsed}ms)`;
-            console.log(`✅ 5) 필터 완료 (${elapsed}ms)`);
-
-            // 6) 결과를 캔버스에 다시 그리기
-            const resultData = resultArray.toJs();
-            const clampedData = new Uint8ClampedArray(resultData.buffer);
-            const filteredImageData = new ImageData(clampedData, w, h);
-            ctx.putImageData(filteredImageData, 0, 0);
-            console.log('✅ 6) 필터링된 이미지를 캔버스에 그림');
-
-            isFilterApplied = true;
-            isCaptured = true;
-            saveBtn.disabled = false;
-            console.log('✅ 7) 캡처 및 필터 적용 완료');
         }
 
         // ============================================================
-        // 6. 저장 (현재 캔버스 내용을 Blob으로 다운로드)
+        // 6. 다시 촬영 → 카메라 화면 복귀
+        // ============================================================
+        function retakePhoto() {
+            isCaptured = false;
+            isReviewMode = false;
+            isFilterApplied = false;
+            capturedImageDataUrl = null;
+            capturedFilter = currentFilter;
+            saveBtn.disabled = true;
+            captureBtn.hidden = false;
+            retakeBtn.hidden = true;
+            filterBtns.forEach(btn => btn.disabled = false);
+
+            // 즉시 현재 카메라 프레임을 표시하고 drawLoop 재개
+            if (video.videoWidth) {
+                ctx.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
+            }
+            statusEl.textContent = '📷 카메라 ON — 다시 촬영할 수 있습니다.';
+            if (animationId) cancelAnimationFrame(animationId);
+            drawLoop();
+        }
+
+        // ============================================================
+        // 7. 저장
         // ============================================================
         async function saveImage() {
-            if (!isCaptured) {
-                alert('먼저 촬영 버튼을 눌러주세요.');
+            if (!isCaptured || !isReviewMode || !capturedImageDataUrl) {
+                alert('먼저 사진을 촬영한 후 결과를 확인해주세요.');
                 return;
             }
 
-            const fileName = `filter_${currentFilter}_${Date.now()}.png`;
+            saveBtn.disabled = true;
+            const fileName = `filter_${capturedFilter}_${Date.now()}.png`;
 
             try {
-                const blob = await new Promise(resolve => previewCanvas.toBlob(resolve, 'image/png'));
-                if (!blob) {
-                    throw new Error('Blob 생성 실패');
-                }
-
+                // 현재 결과 화면과 정확히 같은 PNG를 저장
+                const response = await fetch(capturedImageDataUrl);
+                const blob = await response.blob();
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.download = fileName;
                 link.href = url;
                 document.body.appendChild(link);
                 link.click();
-                document.body.removeChild(link);
+                link.remove();
                 setTimeout(() => URL.revokeObjectURL(url), 5000);
 
-                statusEl.textContent = `💾 저장 완료! (${currentFilter})`;
-                saveBtn.disabled = true;
+                statusEl.textContent = '💾 저장 완료!';
                 isCaptured = false;
+                capturedImageDataUrl = null;
+
+                // 저장 후에는 다시 카메라 상태로 돌아감
+                isReviewMode = false;
+                isFilterApplied = false;
+                captureBtn.hidden = false;
+                retakeBtn.hidden = true;
+                filterBtns.forEach(btn => btn.disabled = false);
+
+                if (animationId) cancelAnimationFrame(animationId);
+                drawLoop();
+
+                setTimeout(() => {
+                    if (cameraStream && !isReviewMode) statusEl.textContent = '📷 카메라 ON';
+                }, 1200);
             } catch (err) {
                 console.error('저장 오류:', err);
+                saveBtn.disabled = false;
+
+                // iOS/일부 모바일 브라우저용 fallback
                 try {
-                    const dataURL = previewCanvas.toDataURL('image/png');
                     const link = document.createElement('a');
                     link.download = fileName;
-                    link.href = dataURL;
+                    link.href = capturedImageDataUrl;
+                    link.target = '_blank';
                     document.body.appendChild(link);
                     link.click();
-                    document.body.removeChild(link);
-                    statusEl.textContent = `💾 저장 완료 (fallback)`;
-                    saveBtn.disabled = true;
-                    isCaptured = false;
-                } catch (e2) {
-                    alert('이미지를 저장할 수 없습니다. 콘솔을 확인하세요.');
+                    link.remove();
+                    statusEl.textContent = '💾 저장을 시작했습니다.';
+                } catch (fallbackErr) {
+                    alert('이미지를 저장할 수 없습니다.\n' + (fallbackErr?.message || fallbackErr));
                 }
             }
-
-            setTimeout(() => {
-                if (cameraStream) statusEl.textContent = '📷 카메라 ON';
-            }, 1500);
         }
 
         // ============================================================
-        // 7. 이벤트 리스너
+        // 8. 이벤트 리스너
         // ============================================================
 
-        // 필터 버튼 클릭: 필터만 선택 (자동 적용 아님)
+        // 필터 버튼: 촬영 전에만 변경 가능
         filterBtns.forEach(btn => {
             btn.addEventListener('click', function() {
+                if (isReviewMode) return;
+
                 filterBtns.forEach(b => b.classList.remove('active'));
                 this.classList.add('active');
                 currentFilter = this.dataset.filter;
-                
-                // 원본이면 바로 원본 모드로 전환
-                if (currentFilter === 'original') {
-                    isFilterApplied = false;
-                    isCaptured = false;
-                    saveBtn.disabled = true;
-                    statusEl.textContent = '📷 원본 카메라 모드';
-                } else {
-                    statusEl.textContent = `🎨 ${this.textContent} 필터 선택됨 (촬영 버튼 누르세요)`;
-                }
+
+                statusEl.textContent = currentFilter === 'original'
+                    ? '📷 원본 카메라 모드 — 촬영 버튼을 누르세요.'
+                    : `🎨 ${this.textContent} 선택 — 촬영 버튼을 누르세요.`;
             });
         });
 
-        // 촬영 버튼: 현재 프레임 캡처 + 필터 적용
+        // 촬영 버튼: 현재 프레임을 찍고 결과 화면으로 전환
         captureBtn.addEventListener('click', captureAndApplyFilter);
 
-        // 저장 버튼: 캔버스 내용 저장
+        // 다시 촬영: 결과를 버리고 카메라로 복귀
+        retakeBtn.addEventListener('click', retakePhoto);
+
+        // 저장: 결과 화면의 이미지를 저장
         saveBtn.addEventListener('click', saveImage);
 
-        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('resize', () => {
+            if (!isReviewMode) {
+                resizeCanvas();
+            }
+        });
 
         // ============================================================
-        // 8. 실행
+        // 9. 실행
         // ============================================================
         async function init() {
             await initPyodide();
